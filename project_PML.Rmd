@@ -106,6 +106,7 @@ modFits <- list()
 accuList <- list()
 validList <- list()
 
+# paralell computing is employed to speed up.
 set.seed(123)
 registerDoMC(cores = detectCores())
 for (i in seq_along(models)) {

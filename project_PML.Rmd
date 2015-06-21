@@ -1,0 +1,138 @@
+---
+title: "Practical machine learning course project"
+author: "Yong-Sheng Cheng"
+date: "June 21, 2015"
+output: html_document
+---
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(cache=TRUE)
+```
+
+## Introduction
+
+This is a prediction analysis for proper exercise movement measured by wearable devices in 6 volunteers. In this analysis, I emplyed 5 different statistical learning models from caret packages to predict the outcome. In the end, random forest is the best method for this purpose.
+
+## Background
+
+The dataset used to perform the analysis is collected at [HAR project](http://groupware.les.inf.puc-rio.br/har). In this dataset, there are data from accelerometers on the belt, forearm, arm, and dumbell of 6 participants. And the outcome is categorial variable classe, which indicate how well the participant perform the barbell.
+
+## Getting the data set 
+
+Loading required packages for the data analysis.
+
+```{r}
+library(caret)
+library(parallel)
+library(doMC)
+```
+
+The dataset are now hosted in the Practical Machine Learning course pages, and downloaded into local folder and read into R.
+
+```{r}
+fileUrl.train <- "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv"
+fileUrl.test <- "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv"
+
+download.file(fileUrl.train,"pml-training.csv",method="curl")
+download.file(fileUrl.test,"pml-testing.csv",method="curl")
+
+train <- read.csv("pml-training.csv")
+test <- read.csv("pml-testing.csv")
+```
+
+## Data cleaning
+
+There are a lot of NAs in the dataset needed to be removed. Also, these columns with near zero variance or related to data collection are also removed.
+
+```{r}
+# remove 67 columns with ~98% NAs
+naPortion <- apply(train, 2, function(x) mean(is.na(x)))
+table(naPortion)
+naRemoval <- naPortion > 0.9
+newTrain <- train[,names(train)[!naRemoval]]
+
+# remove columns with near zero variances
+nearZeroCols <- nearZeroVar(newTrain)
+newTrain <- newTrain[,-nearZeroCols]
+
+# remove columns related to data collection
+# including X, user_name, raw_timestamp_part_1,  
+# raw_timestamp_part_2, cvtd_timestamp, num_window
+newTrain <- newTrain[,-c(1:6)]
+```
+
+## Splitting data for machine learning
+
+Using function createDataPartition from caret package to split the data set into train and validat. train is used to build the model, and validat is used to validate the model.
+
+In addition, the correlation between variables is checked. The result indicate there is need for PCA preprocessing before modeling.
+
+```{r}
+# split data newTrain into train and test
+inTrain <- createDataPartition(y=newTrain$classe,p=0.7,list=FALSE)
+train <- newTrain[inTrain,]
+validat <- newTrain[-inTrain,]
+names(train)
+
+# check correlation between columns
+M <- abs(cor(train[,-53]))
+diag(M) <- 0
+which(M > 0.8,arr.ind=T)
+```
+
+## Modeling
+
+The modeling was performed with several models in order to find the best model to predict the data. In this analysis, random forest, support vector machine, neural network, bayes generalized linear model, and CART were used to predict the outcome variable classe especially.
+
+Since there is significant amount of correlation in these prediction variables, PCA is also used to preprocess the data to reduce the redundancy.
+
+In addition, cross validation is employed to control the out-of-sample error.
+
+```{r}
+# model fitting with caret package, with PCA preprocessing
+# compare several methods, including random forest (rf), 
+# support vector machine (svmLinear),
+# neural network(nnet), bayes general linear model(glm),
+# CART(rpart)
+
+models <- c("rf","svmLinear","nnet","bayesglm","rpart")
+
+# 10 fold cross validation is used to control the out of sample error rate
+tc <- trainControl(method = "cv", number = 10, allowParallel=TRUE)
+
+# modeling with all proposed models, check in-sample (accuList) 
+# and out-of-sample (validList) error rate
+
+modFits <- list()
+accuList <- list()
+validList <- list()
+
+set.seed(123)
+registerDoMC(cores = detectCores())
+for (i in seq_along(models)) {
+    modFit <- train(classe ~., data=train, method=models[i], preProcess="pca", trControl = tc)
+    modFits[[i]] <- modFit
+    accuList[[i]] <- max(modFit$results$Accuracy)
+    validList[[i]] <- confusionMatrix(validat$classe, predict(modFit, validat))$overall[1]
+}
+modelResult <- data.frame(Model=models, In_sample_accuracy=unlist(accuList), Out_sample_accuracy=unlist(validList))
+modelResult
+```
+
+## Prediction on test data
+
+Finally, the random forest method is used to predict the test data set outcome.
+
+```{r}
+# random forest turn out to be the best model for this data
+test <- test[,names(newTrain)[-53]]
+answers <- predict(modFits[[1]], test)
+
+pml_write_files = function(x){
+    n = length(x)
+    for(i in 1:n){
+        filename = paste0("problem_id_",i,".txt")
+        write.table(x[i],file=filename,quote=FALSE,row.names=FALSE,col.names=FALSE)
+    }
+}
+pml_write_files(answers)
+```
